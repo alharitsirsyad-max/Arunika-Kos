@@ -1,0 +1,351 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                   String             @id @default(uuid())
+  name                 String
+  email                String             @unique
+  password             String?
+  role                 Role               @default(USER)
+  phone                String?
+  avatar_url           String?
+  created_at           DateTime           @default(now())
+  email_verified       Boolean            @default(false)
+  google_id            String?            @unique
+  verification_status  VerificationStatus @default(PENDING)
+  confirmed_agreements Agreement[]        @relation("ConfirmedAgreements")
+  bookings             Booking[]
+  emergency_contacts   EmergencyContact[]
+  ownedDocuments       IdentityDocument[] @relation("OwnedDocuments")
+  verifiedDocuments    IdentityDocument[] @relation("VerifiedDocuments")
+  notifications        Notification[]
+  reports              Report[]
+  reviews              Review[]
+  unit_status_changes  UnitStatusLog[]    @relation("UnitStatusChanges")
+
+  @@map("users")
+}
+
+model Room {
+  id            String      @id @default(uuid())
+  name          String
+  price         Int
+  facilities    String[]
+  description   String
+  capacity      Int
+  created_at    DateTime    @default(now())
+  period_months Int         @default(3)
+  images        RoomImage[]
+  units         RoomUnit[]
+
+  @@map("rooms")
+}
+
+model RoomUnit {
+  id          String          @id @default(uuid())
+  room_id     String
+  room_number String
+  status      UnitStatus      @default(AVAILABLE)
+  agreements  Agreement[]
+  bookings    Booking[]
+  reports     Report[]
+  room        Room            @relation(fields: [room_id], references: [id], onDelete: Cascade)
+  status_logs UnitStatusLog[]
+
+  @@unique([room_id, room_number])
+  @@map("room_units")
+}
+
+model UnitStatusLog {
+  id         String     @id @default(cuid())
+  unit_id    String
+  old_status UnitStatus
+  new_status UnitStatus
+  changed_by String
+  changed_at DateTime   @default(now())
+  note       String?
+  admin      User       @relation("UnitStatusChanges", fields: [changed_by], references: [id])
+  room_unit  RoomUnit   @relation(fields: [unit_id], references: [id])
+
+  @@index([unit_id])
+  @@index([changed_by])
+  @@map("unit_status_logs")
+}
+
+model RoomImage {
+  id        String @id @default(uuid())
+  room_id   String
+  image_url String
+  room      Room   @relation(fields: [room_id], references: [id], onDelete: Cascade)
+
+  @@map("room_images")
+}
+
+model Booking {
+  id                    String         @id @default(uuid())
+  user_id               String
+  room_unit_id          String
+  start_date            DateTime
+  duration_periods      Int
+  total_price           Int
+  status                BookingStatus  @default(PENDING)
+  created_at            DateTime       @default(now())
+  admin_note            String?
+  last_reminder_sent_at DateTime?
+  cancellation_message  String?
+  agreement             Agreement?
+  room_unit             RoomUnit       @relation(fields: [room_unit_id], references: [id])
+  user                  User           @relation(fields: [user_id], references: [id])
+  invoices              Invoice[]
+  notifications         Notification[]
+  review                Review?
+
+  @@map("bookings")
+}
+
+model Invoice {
+  id                    String        @id @default(cuid())
+  booking_id            String
+  type                  InvoiceType
+  extra_duration_months Int?
+  amount                Int
+  due_date              DateTime
+  status                InvoiceStatus @default(UNPAID)
+  created_at            DateTime      @default(now())
+  grace_period_days     Int           @default(3)
+  late_fee_per_day      Int           @default(50000)
+  is_late_fee_waived    Boolean       @default(false)
+  receipt_number        String?       @unique
+  dp_amount             Int?
+  items                 InvoiceItem[]
+  booking               Booking       @relation(fields: [booking_id], references: [id])
+  payment               Payment?
+
+  @@map("invoices")
+}
+
+model Agreement {
+  id                String          @id @default(cuid())
+  booking_id        String          @unique
+  room_unit_id      String
+  agreed_start_date DateTime        @db.Date
+  agreed_price      Int
+  status            AgreementStatus @default(DRAFT)
+  confirmed_by      String?
+  confirmed_at      DateTime?
+  created_at        DateTime        @default(now())
+  booking           Booking         @relation(fields: [booking_id], references: [id])
+  confirmer         User?           @relation("ConfirmedAgreements", fields: [confirmed_by], references: [id])
+  room_unit         RoomUnit        @relation(fields: [room_unit_id], references: [id])
+
+  @@map("agreements")
+}
+
+model InvoiceItem {
+  id          String   @id @default(cuid())
+  invoice_id  String
+  description String
+  amount      Int
+  created_at  DateTime @default(now())
+  invoice     Invoice  @relation(fields: [invoice_id], references: [id], onDelete: Cascade)
+
+  @@map("invoice_items")
+}
+
+model EmergencyContact {
+  id           String           @id @default(cuid())
+  user_id      String
+  name         String           @db.VarChar(100)
+  relationship RelationshipType
+  phone_number String
+  created_at   DateTime         @default(now())
+  user         User             @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@map("emergency_contacts")
+}
+
+model Notification {
+  id                 String           @id @default(cuid())
+  user_id            String
+  type               NotificationType
+  message            String
+  is_read            Boolean          @default(false)
+  related_booking_id String?
+  created_at         DateTime         @default(now())
+  related_booking    Booking?         @relation(fields: [related_booking_id], references: [id])
+  user               User             @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id, is_read])
+  @@index([user_id, created_at])
+  @@map("notifications")
+}
+
+model Payment {
+  id                String        @id @default(uuid())
+  invoice_id        String        @unique
+  midtrans_order_id String        @unique
+  amount            Int
+  status            PaymentStatus @default(PENDING)
+  payment_method    String?
+  paid_at           DateTime?
+  invoice           Invoice       @relation(fields: [invoice_id], references: [id])
+
+  @@map("payments")
+}
+
+model Review {
+  id         String   @id @default(uuid())
+  user_id    String
+  booking_id String   @unique
+  rating     Int
+  comment    String
+  created_at DateTime @default(now())
+  booking    Booking  @relation(fields: [booking_id], references: [id])
+  user       User     @relation(fields: [user_id], references: [id])
+
+  @@map("reviews")
+}
+
+model Report {
+  id           String       @id @default(cuid())
+  user_id      String
+  room_unit_id String?
+  type         ReportType
+  title        String       @db.VarChar(200)
+  description  String
+  image_url    String?
+  status       ReportStatus @default(OPEN)
+  admin_note   String?
+  created_at   DateTime     @default(now())
+  updated_at   DateTime     @updatedAt
+  room_unit    RoomUnit?    @relation(fields: [room_unit_id], references: [id])
+  user         User         @relation(fields: [user_id], references: [id])
+
+  @@index([user_id])
+  @@index([status])
+  @@map("reports")
+}
+
+model IdentityDocument {
+  id                  String             @id @default(cuid())
+  user_id             String
+  document_type       DocumentType
+  document_url        String
+  verification_status VerificationStatus @default(PENDING)
+  verified_by         String?
+  verified_at         DateTime?
+  created_at          DateTime           @default(now())
+  user                User               @relation("OwnedDocuments", fields: [user_id], references: [id])
+  verifier            User?              @relation("VerifiedDocuments", fields: [verified_by], references: [id])
+
+  @@index([user_id])
+  @@index([verification_status])
+  @@map("identity_documents")
+}
+
+model OtpCode {
+  id         String   @id @default(cuid())
+  email      String
+  code       String
+  purpose    String
+  expires_at DateTime
+  used       Boolean  @default(false)
+  created_at DateTime @default(now())
+
+  @@index([email, purpose])
+  @@map("otp_codes")
+}
+
+enum Role {
+  ADMIN
+  USER
+}
+
+enum UnitStatus {
+  AVAILABLE
+  OCCUPIED
+  RESERVED
+}
+
+enum BookingStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  ACTIVE
+  DONE
+  DP_PENDING
+  DP_PAID
+  EXPIRED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  PENDING
+  SETTLEMENT
+  EXPIRE
+  CANCEL
+}
+
+enum InvoiceType {
+  INITIAL
+  EXTENSION
+  DP
+  PELUNASAN
+}
+
+enum InvoiceStatus {
+  UNPAID
+  PENDING_VERIFICATION
+  PAID
+  REFUND_PENDING
+  CANCELLED
+}
+
+enum AgreementStatus {
+  DRAFT
+  CONFIRMED
+}
+
+enum RelationshipType {
+  ORANG_TUA
+  SAUDARA
+  TEMAN
+}
+
+enum NotificationType {
+  BOOKING_EXPIRED
+  AGREEMENT_CONFIRMED
+  BOOKING_ACTIVE
+  RENEWAL_REMINDER
+  RE_VERIFICATION_REQUESTED
+}
+
+enum ReportType {
+  WEBSITE_ISSUE
+  ROOM_ISSUE
+}
+
+enum ReportStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+}
+
+enum DocumentType {
+  KTP
+  KARTU_PELAJAR
+  KK
+}
+
+enum VerificationStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
