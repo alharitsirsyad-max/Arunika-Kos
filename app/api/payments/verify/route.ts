@@ -91,16 +91,31 @@ export async function POST(req: NextRequest) {
 
       // 3. Handle berdasarkan tipe invoice
       if (invoice.type === "DP" && invoice.booking.status === "DP_PENDING") {
-        // DP paid → Booking DP_PENDING → DP_PAID, Room → RESERVED
-        await tx.booking.update({
+        const bData = await prisma.booking.findUnique({
           where: { id: invoice.booking.id },
-          data: { status: "DP_PAID" },
+          select: { start_date: true },
         });
+        const now = new Date();
+        const todayUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+        const sDate = bData?.start_date ?? new Date(0);
+        const sDateUTC = new Date(Date.UTC(sDate.getUTCFullYear(), sDate.getUTCMonth(), sDate.getUTCDate()));
+        const startReached = sDateUTC <= todayUTC;
 
-        await tx.roomUnit.update({
-          where: { id: invoice.booking.room_unit_id },
-          data: { status: "RESERVED" },
-        });
+        if (startReached) {
+          await tx.booking.update({ where: { id: invoice.booking.id }, data: { status: "ACTIVE" } });
+          await tx.roomUnit.update({ where: { id: invoice.booking.room_unit_id }, data: { status: "OCCUPIED" } });
+          await tx.notification.create({
+            data: {
+              user_id: invoice.booking.user_id,
+              type: "BOOKING_ACTIVE",
+              message: "Status sewa Anda kini AKTIF. Kamar resmi menjadi hak Anda.",
+              related_booking_id: invoice.booking.id,
+            },
+          });
+        } else {
+          await tx.booking.update({ where: { id: invoice.booking.id }, data: { status: "DP_PAID" } });
+          await tx.roomUnit.update({ where: { id: invoice.booking.room_unit_id }, data: { status: "RESERVED" } });
+        }
 
         // Expire semua booking PENDING/DP_PENDING lain untuk unit yang sama
         const otherBookings = await tx.booking.findMany({

@@ -61,6 +61,15 @@ export function NavbarUser() {
         <div className="flex items-center gap-1">
           <NotificationBell />
           <Button
+            render={<Link href="/" />}
+            nativeButton={false}
+            variant="ghost"
+            size="sm"
+            className="text-muted-foreground"
+          >
+            Ke Website
+          </Button>
+          <Button
             variant="ghost"
             size="sm"
             onClick={handleSignOut}

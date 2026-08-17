@@ -1,8 +1,11 @@
 import { prisma } from "@/lib/prisma";
 import { sendOtpEmail } from "@/lib/brevo";
+import { hash, compare } from "bcryptjs";
 
 const OTP_EXPIRY_MINUTES = 10;
 const OTP_COOLDOWN_SECONDS = 60; // Tunggu 60 detik sebelum kirim ulang
+const MAX_OTP_ATTEMPTS = 5; // Maksimum percobaan verifikasi OTP yang diizinkan
+const OTP_HASH_ROUNDS = 10; // Lebih rendah dari password (12) karena OTP berumur pendek
 
 /**
  * Generate 6-digit OTP code.
@@ -48,19 +51,21 @@ export const otpService = {
 
     // Buat OTP baru
     const code = generateOtp();
+    const hashedCode = await hash(code, OTP_HASH_ROUNDS);
     const expiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
 
     await prisma.otpCode.create({
-      data: { email, code, purpose, expires_at: expiresAt },
+      data: { email, code: hashedCode, purpose, expires_at: expiresAt },
     });
 
-    // Kirim via Brevo
+    // Kirim plain-text ke email — tidak pernah disimpan ke DB
     await sendOtpEmail(email, name, code, purpose);
   },
 
   /**
    * Verifikasi OTP yang dimasukkan user.
    * Return true jika valid, throw Error jika tidak valid.
+   * Dilindungi oleh brute-force protection: maks 5 percobaan gagal.
    */
   async verifyOtp(
     email: string,
@@ -81,11 +86,39 @@ export const otpService = {
       throw new Error("Kode OTP tidak valid atau sudah kadaluarsa");
     }
 
-    if (otp.code !== code) {
+    // Cek apakah sudah melebihi max attempts — invalidate paksa jika iya
+    if (otp.attempt_count >= MAX_OTP_ATTEMPTS) {
+      await prisma.otpCode.update({
+        where: { id: otp.id },
+        data: { used: true },
+      });
+      throw new Error(
+        "OTP telah dinonaktifkan karena terlalu banyak percobaan. Minta OTP baru."
+      );
+    }
+
+    const isValid = await compare(code, otp.code);
+    if (!isValid) {
+      const newCount = otp.attempt_count + 1;
+      if (newCount >= MAX_OTP_ATTEMPTS) {
+        // Percobaan ke-5 salah → invalidate sekaligus
+        await prisma.otpCode.update({
+          where: { id: otp.id },
+          data: { used: true, attempt_count: newCount },
+        });
+        throw new Error(
+          "OTP telah dinonaktifkan karena terlalu banyak percobaan. Minta OTP baru."
+        );
+      }
+      // Increment attempt_count
+      await prisma.otpCode.update({
+        where: { id: otp.id },
+        data: { attempt_count: newCount },
+      });
       throw new Error("Kode OTP salah");
     }
 
-    // Tandai sebagai sudah dipakai
+    // Kode benar — tandai sebagai sudah dipakai
     await prisma.otpCode.update({
       where: { id: otp.id },
       data: { used: true },

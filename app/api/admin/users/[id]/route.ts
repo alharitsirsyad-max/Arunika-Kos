@@ -51,20 +51,42 @@ export async function GET(_req: Request, { params }: Params) {
     const expiresAt = Math.floor(Date.now() / 1000) + 3600;
 
     const documentsWithSignedUrl = user.ownedDocuments.map((doc) => {
+      // Audit log sebelum generate signed URL (Req 7.1, 7.2, 7.3, 7.4)
+      // signed_url dan document_url TIDAK dicatat
+      console.info(
+        "[AUDIT]",
+        JSON.stringify({
+          adminId: sessionUser.id,
+          action: "VIEW_IDENTITY_DOCUMENT",
+          documentId: doc.id,
+          documentOwnerId: user.id,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+
       let signedUrl: string = doc.document_url;
 
       try {
-        // Extract publicId dari full URL Cloudinary
-        // Contoh URL: https://res.cloudinary.com/demo/image/upload/v123/folder/filename.jpg
-        const urlParts = doc.document_url.split("/");
-        const publicIdWithExt = urlParts.slice(-2).join("/"); // folder/filename.ext
-        const publicId = publicIdWithExt.replace(/\.[^/.]+$/, ""); // hapus extension
+        // Extract publicId dari full URL Cloudinary private
+        // Format URL private: https://res.cloudinary.com/{cloud}/image/private/v{ver}/{public_id}.{ext}
+        // public_id untuk dokumen identitas: "identity-documents/{filename}" (tanpa ekstensi)
+        const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+        const uploadTypePattern = cloudName
+          ? new RegExp(
+              `res\\.cloudinary\\.com/${cloudName}/(?:image|video|raw)/(?:upload|private|authenticated)/(?:v\\d+/)?(.+?)(?:\\.[^./]+)?$`
+            )
+          : null;
 
-        signedUrl = cloudinary.url(publicId, {
-          sign_url: true,
-          type: "private",
-          expires_at: expiresAt,
-        });
+        const match = uploadTypePattern?.exec(doc.document_url);
+        const publicId = match?.[1];
+
+        if (publicId) {
+          signedUrl = cloudinary.url(publicId, {
+            sign_url: true,
+            type: "authenticated",
+            expires_at: expiresAt,
+          });
+        }
       } catch {
         // Fallback ke document_url asli jika Cloudinary tidak terkonfigurasi atau gagal
         signedUrl = doc.document_url;

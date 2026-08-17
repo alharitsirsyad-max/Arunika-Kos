@@ -32,14 +32,10 @@ export async function POST(request: Request) {
   let skipped = 0;
   let errors = 0;
 
-  // Query semua Booking ACTIVE dengan Agreement CONFIRMED
+  // Query semua Booking ACTIVE
   const activeBookings = await prisma.booking.findMany({
-    where: {
-      status: "ACTIVE",
-      agreement: { status: "CONFIRMED" },
-    },
+    where: { status: "ACTIVE" },
     include: {
-      agreement: true,
       user: true,
       room_unit: {
         include: { room: true },
@@ -49,12 +45,11 @@ export async function POST(request: Request) {
 
   for (const booking of activeBookings) {
     try {
-      const { agreed_start_date } = booking.agreement!;
-      const { duration_periods } = booking;
+      const { start_date, duration_periods } = booking;
       const periodMonths = booking.room_unit.room.period_months;
 
-      // Hitung end_date: agreed_start_date + (duration_periods × period_months bulan)
-      const endDate = addMonths(agreed_start_date, duration_periods * periodMonths);
+      // Hitung end_date dari start_date booking
+      const endDate = addMonths(start_date, duration_periods * periodMonths);
       const remainingDays = differenceInDays(endDate, today);
 
       // Lewati jika di luar window reminder (> 30 hari atau sudah lewat)
@@ -76,7 +71,7 @@ export async function POST(request: Request) {
           data: {
             user_id: booking.user_id,
             type: "RENEWAL_REMINDER",
-            message: `Masa sewa kamar ${booking.room_unit.room_number} Anda akan berakhir dalam ${remainingDays} hari (${endDate.toLocaleDateString("id-ID")}). Segera ajukan perpanjangan.`,
+            message: `Masa sewa kamar ${booking.room_unit.room.name} (Unit ${booking.room_unit.room_number}) Anda akan berakhir dalam ${remainingDays} hari (${endDate.toLocaleDateString("id-ID")}). Segera ajukan perpanjangan.`,
             related_booking_id: booking.id,
           },
         });

@@ -29,12 +29,14 @@ export async function POST(req: NextRequest, { params }: Params) {
     }
 
     const userId = session.user!.id!;
+    const role = (session.user as { role?: string })?.role ?? 'USER';
     const { id } = await params;
 
     const result = await bookingService.cancelBooking(
       userId,
       id,
-      parsed.data.cancellationMessage
+      parsed.data.cancellationMessage,
+      role
     );
 
     return apiResponse.success(result, "Booking berhasil dibatalkan");

@@ -1,60 +1,58 @@
-import { NextRequest } from "next/server";
 import { auth } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
 import { apiResponse } from "@/lib/utils/apiResponse";
 import { handleError } from "@/lib/errors/handleError";
-import { UnauthorizedError, ValidationError } from "@/lib/errors/AppError";
-import { updateProfileSchema } from "@/lib/validations/user";
-import { userService } from "@/lib/services/user.service";
-import { userRepo } from "@/lib/repositories/user.repo";
+import { UnauthorizedError } from "@/lib/errors/AppError";
 
 /**
- * GET /api/users/me — ambil data user untuk pre-fill form
- *
- * Requirements: 8.1
+ * DELETE /api/users/me — user hapus akun sendiri secara permanen
+ * Menghapus semua data terkait user tanpa terkecuali.
  */
-export async function GET() {
+export async function DELETE() {
   try {
     const session = await auth();
-    if (!session) {
-      throw new UnauthorizedError("Belum login");
-    }
+    if (!session) throw new UnauthorizedError("Belum login");
 
     const userId = session.user!.id!;
-    const user = await userRepo.findById(userId);
 
-    return apiResponse.success(user, "Berhasil mengambil profil");
-  } catch (error) {
-    return handleError(error);
-  }
-}
+    // Hapus semua data terkait dalam urutan yang benar (FK constraint)
+    await prisma.$transaction(async (tx) => {
+      // Hapus payment → invoice → booking terkait
+      const bookings = await tx.booking.findMany({
+        where: { user_id: userId },
+        select: { id: true },
+      });
+      const bookingIds = bookings.map((b) => b.id);
 
-/**
- * PATCH /api/users/me — update profil user
- * Memperbarui nama, nomor telepon, dan/atau alamat.
- * Setelah update, verification_status otomatis diubah ke PENDING
- * dan notifikasi re-verifikasi dikirim ke Admin.
- *
- * Requirements: 8.2
- */
-export async function PATCH(req: NextRequest) {
-  try {
-    const session = await auth();
-    if (!session) {
-      throw new UnauthorizedError("Belum login");
-    }
+      if (bookingIds.length > 0) {
+        const invoices = await tx.invoice.findMany({
+          where: { booking_id: { in: bookingIds } },
+          select: { id: true },
+        });
+        const invoiceIds = invoices.map((i) => i.id);
 
-    const body = await req.json();
-    const parsed = updateProfileSchema.safeParse(body);
-    if (!parsed.success) {
-      throw new ValidationError(
-        `Validasi gagal: ${JSON.stringify(parsed.error.flatten())}`
-      );
-    }
+        if (invoiceIds.length > 0) {
+          await tx.payment.deleteMany({ where: { invoice_id: { in: invoiceIds } } });
+          await tx.invoiceItem.deleteMany({ where: { invoice_id: { in: invoiceIds } } });
+          await tx.invoice.deleteMany({ where: { id: { in: invoiceIds } } });
+        }
 
-    const userId = session.user!.id!;
-    const result = await userService.updateUserProfile(userId, parsed.data);
+        await tx.agreement.deleteMany({ where: { booking_id: { in: bookingIds } } });
+        await tx.review.deleteMany({ where: { booking_id: { in: bookingIds } } });
+        await tx.booking.deleteMany({ where: { user_id: userId } });
+      }
 
-    return apiResponse.success(result, "Profil berhasil diperbarui");
+      await tx.identityDocument.deleteMany({ where: { user_id: userId } });
+      await tx.emergencyContact.deleteMany({ where: { user_id: userId } });
+      await tx.notification.deleteMany({ where: { user_id: userId } });
+      await tx.report.deleteMany({ where: { user_id: userId } });
+      await tx.otpCode.deleteMany({ where: { email: session.user!.email! } });
+
+      // Hapus user terakhir
+      await tx.user.delete({ where: { id: userId } });
+    });
+
+    return apiResponse.success(null, "Akun berhasil dihapus secara permanen.");
   } catch (error) {
     return handleError(error);
   }

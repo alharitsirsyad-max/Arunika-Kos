@@ -2,6 +2,7 @@ import { auth } from '@/lib/auth'
 import { redirect } from 'next/navigation'
 import { UnifiedIdentityForm } from '@/components/identity/UnifiedIdentityForm'
 import { ReVerificationBanner } from '@/components/identity/ReVerificationBanner'
+import { DeleteAccountSection } from '@/components/identity/DeleteAccountSection'
 
 export default async function IdentityPage() {
   const session = await auth()
@@ -15,6 +16,7 @@ export default async function IdentityPage() {
         </div>
         <ReVerificationBanner />
         <UnifiedIdentityForm />
+        <DeleteAccountSection />
       </div>
     </main>
   )

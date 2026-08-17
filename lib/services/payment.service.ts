@@ -245,17 +245,49 @@ export const paymentService = {
           });
 
           if (booking) {
-            // Booking DP_PENDING → DP_PAID
-            await tx.booking.update({
+            // Cek apakah tanggal mulai sudah tiba
+            const bData = await tx.booking.findUnique({
               where: { id: booking.id },
-              data: { status: "DP_PAID" },
+              select: { start_date: true, total_price: true },
             });
+            const now2 = new Date();
+            const todayUTC2 = new Date(Date.UTC(now2.getUTCFullYear(), now2.getUTCMonth(), now2.getUTCDate()));
+            const sDate = bData?.start_date ?? new Date(0);
+            const sDateUTC = new Date(Date.UTC(sDate.getUTCFullYear(), sDate.getUTCMonth(), sDate.getUTCDate()));
+            const startReached = sDateUTC <= todayUTC2;
 
-            // Room_Unit → RESERVED
-            await tx.roomUnit.update({
-              where: { id: booking.room_unit_id },
-              data: { status: "RESERVED" },
-            });
+            if (startReached) {
+              // Tanggal mulai sudah tiba → langsung ACTIVE + OCCUPIED
+              await tx.booking.update({ where: { id: booking.id }, data: { status: "ACTIVE" } });
+              await tx.roomUnit.update({ where: { id: booking.room_unit_id }, data: { status: "OCCUPIED" } });
+              await tx.notification.create({
+                data: {
+                  user_id: booking.user_id,
+                  type: "BOOKING_ACTIVE",
+                  message: "Status sewa Anda kini AKTIF. Kamar resmi menjadi hak Anda.",
+                  related_booking_id: booking.id,
+                },
+              });
+            } else {
+              // Belum waktunya → DP_PAID + RESERVED, tunggu cron
+              await tx.booking.update({ where: { id: booking.id }, data: { status: "DP_PAID" } });
+              await tx.roomUnit.update({ where: { id: booking.room_unit_id }, data: { status: "RESERVED" } });
+            }
+
+            // Agreement otomatis
+            const existingAgreement = await tx.agreement.findFirst({ where: { booking_id: booking.id } });
+            if (!existingAgreement && bData) {
+              await tx.agreement.create({
+                data: {
+                  booking_id: booking.id,
+                  room_unit_id: booking.room_unit_id,
+                  agreed_start_date: bData.start_date,
+                  agreed_price: bData.total_price,
+                  status: "CONFIRMED",
+                  confirmed_at: new Date(),
+                },
+              });
+            }
 
             // Expire all other PENDING/DP_PENDING bookings for same unit
             const otherBookings = await tx.booking.findMany({

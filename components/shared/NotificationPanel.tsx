@@ -26,16 +26,32 @@ import type { Notification, NotificationsResponse, NotificationType } from '@/ty
 
 function getNavigationUrl(type: NotificationType, relatedBookingId: string | null): string {
   switch (type) {
-    case 'BOOKING_EXPIRED':
-      return '/dashboard/invoices'
-    case 'AGREEMENT_CONFIRMED':
-      return relatedBookingId
-        ? `/dashboard/invoices`
-        : '/dashboard/invoices'
+    // User notifications
     case 'BOOKING_ACTIVE':
+    case 'BOOKING_APPROVED':
+    case 'BOOKING_REJECTED':
+    case 'BOOKING_EXPIRED':
+    case 'BOOKING_CANCELLED':
       return '/dashboard'
     case 'RENEWAL_REMINDER':
+    case 'EXTENSION_APPROVED':
+    case 'EXTENSION_REJECTED':
       return '/dashboard/invoices'
+    case 'IDENTITY_VERIFIED':
+    case 'IDENTITY_REJECTED':
+    case 'ACCOUNT_BLOCKED':
+      return '/dashboard/identity'
+    // Admin notifications
+    case 'BOOKING_PENDING':
+      return '/admin/bookings'
+    case 'PAYMENT_RECEIVED':
+      return '/admin/invoices'
+    case 'REPORT_SUBMITTED':
+      return '/admin/reports'
+    case 'RE_VERIFICATION_REQUESTED':
+      return '/admin/identity'
+    case 'AGREEMENT_CONFIRMED':
+      return '/dashboard'
     default:
       return '/dashboard'
   }

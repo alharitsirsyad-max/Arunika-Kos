@@ -8,6 +8,8 @@ export function NavbarPublic() {
   const { data: session, status } = useSession()
   const isLoading = status === 'loading'
   const isLoggedIn = !!session
+  const role = (session?.user as { role?: string })?.role
+  const dashboardHref = role === 'ADMIN' ? '/admin' : '/dashboard'
 
   return (
     <header className="w-full border-b bg-background">
@@ -39,7 +41,7 @@ export function NavbarPublic() {
               <span className="text-sm text-muted-foreground">
                 {session.user?.name}
               </span>
-              <Button render={<Link href="/dashboard" />} nativeButton={false} size="sm">
+              <Button render={<Link href={dashboardHref} />} nativeButton={false} size="sm">
                 Dashboard
               </Button>
             </>

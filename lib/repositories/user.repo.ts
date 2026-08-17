@@ -78,6 +78,7 @@ export const userRepo = {
         : undefined,
       select: safeUserSelect,
       orderBy: { created_at: "desc" },
+      take: 50,
     });
   },
 

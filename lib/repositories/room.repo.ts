@@ -59,6 +59,7 @@ export const roomRepo = {
     return rooms.map((room) => ({
       ...room,
       available_units: room.units.filter((u) => u.status === "AVAILABLE").length,
+      reserved_units: room.units.filter((u) => u.status === "RESERVED").length,
       total_units: room.units.length,
       units: room.units.map((unit) => {
         const activeBooking = unit.bookings?.[0] ?? null;

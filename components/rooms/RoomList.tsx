@@ -31,12 +31,13 @@ function RoomCardSkeleton() {
 
 export function RoomList() {
   const router = useRouter()
-  const { status: authStatus } = useSession()
+  const { data: session, status: authStatus } = useSession()
   const { data: rooms, isLoading, isError, refetch, error } = useRooms()
+  const isAdmin = (session?.user as { role?: string })?.role === 'ADMIN'
 
-  // Cek apakah user sudah punya booking aktif (hanya jika logged in)
+  // Cek apakah user sudah punya booking aktif (hanya jika logged in dan bukan admin)
   const { data: activeBookingStatus } = useMyActiveBooking()
-  const userHasActiveBooking = authStatus === 'authenticated' && (activeBookingStatus?.has_active ?? false)
+  const userHasActiveBooking = authStatus === 'authenticated' && !isAdmin && (activeBookingStatus?.has_active ?? false)
 
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null)
 
@@ -46,6 +47,7 @@ export function RoomList() {
       router.push('/login?callbackUrl=/rooms')
       return
     }
+    if (isAdmin) return // Admin tidak bisa booking
     setSelectedRoom(room)
   }
 
@@ -102,6 +104,7 @@ export function RoomList() {
             room={room}
             onBooking={handleBookingClick}
             userHasActiveBooking={userHasActiveBooking}
+            isAdmin={isAdmin}
           />
         ))}
       </div>

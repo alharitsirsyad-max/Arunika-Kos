@@ -24,6 +24,10 @@ export const registerSchema = z.object({
     .max(72, "Password maksimal 72 karakter")
     .regex(/[a-zA-Z]/, "Password harus mengandung minimal satu huruf")
     .regex(/[0-9]/, "Password harus mengandung minimal satu angka"),
+  address: z
+    .string()
+    .min(5, "Alamat minimal 5 karakter")
+    .max(300, "Alamat maksimal 300 karakter"),
 });
 
 export const loginSchema = z.object({
@@ -58,6 +62,7 @@ export const registerSchemaFrontend = z
     password: z.string().min(8, "Password minimal 8 karakter"),
     confirmPassword: z.string(),
     phone: z.string().min(1, "Nomor telepon tidak boleh kosong"),
+    address: z.string().min(5, "Alamat minimal 5 karakter"),
   })
   .refine((d) => d.password === d.confirmPassword, {
     message: "Password tidak cocok",

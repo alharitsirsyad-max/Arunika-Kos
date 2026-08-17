@@ -13,6 +13,7 @@ const schema = z.object({
   name: z.string().min(1, "Nama wajib diisi"),
   password: z.string().min(8, "Password minimal 8 karakter"),
   phone: z.string().min(1, "Nomor telepon wajib diisi"),
+  address: z.string().min(1, "Alamat wajib diisi").optional(),
 });
 
 /**
@@ -30,7 +31,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { email, code, name, password, phone } = parsed.data;
+    const { email, code, name, password, phone, address } = parsed.data;
 
     // Verifikasi OTP
     await otpService.verifyOtp(email, code, "register");
@@ -44,46 +45,24 @@ export async function POST(req: NextRequest) {
     // Hash password
     const hashedPassword = await hash(password, 12);
 
-    // Buat user — handle jika kolom baru belum ada
-    let user;
-    try {
-      user = await prisma.user.create({
-        data: {
-          name,
-          email,
-          password: hashedPassword,
-          phone,
-          email_verified: true,
-          role: "USER",
-        },
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          role: true,
-          created_at: true,
-        },
-      });
-    } catch (createError) {
-      // Fallback jika kolom email_verified belum ada
-      console.warn("[VERIFY_REGISTER] Mencoba tanpa email_verified:", createError);
-      user = await prisma.user.create({
-        data: {
-          name,
-          email,
-          password: hashedPassword,
-          phone,
-          role: "USER",
-        } as Parameters<typeof prisma.user.create>[0]["data"],
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          role: true,
-          created_at: true,
-        },
-      });
-    }
+    const user = await prisma.user.create({
+      data: {
+        name,
+        email,
+        password: hashedPassword,
+        phone,
+        address: address ?? null,
+        email_verified: true,
+        role: "USER",
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        created_at: true,
+      },
+    });
 
     return apiResponse.created(user, "Akun berhasil dibuat");
   } catch (error) {

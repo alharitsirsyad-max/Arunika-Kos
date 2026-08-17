@@ -1,4 +1,5 @@
 import { identityRepo } from "@/lib/repositories/identity.repo";
+import { prisma } from "@/lib/prisma";
 import { NotFoundError, ValidationError } from "@/lib/errors/AppError";
 import type { UploadIdentityInput, IdentityDocumentPublic } from "@/lib/types/identity.types";
 import type { VerificationStatus } from "@prisma/client";
@@ -42,11 +43,25 @@ export const identityService = {
     userId: string,
     input: UploadIdentityInput
   ): Promise<IdentityDocumentPublic> {
-    return identityRepo.create({
+    const result = await identityRepo.create({
       user_id: userId,
       document_type: input.document_type,
       document_url: input.document_url,
     });
+
+    // Notifikasi ke semua admin — dokumen identitas baru perlu diverifikasi
+    const admins = await prisma.user.findMany({ where: { role: "ADMIN" }, select: { id: true } });
+    if (admins.length > 0) {
+      await prisma.notification.createMany({
+        data: admins.map((admin) => ({
+          user_id: admin.id,
+          type: "RE_VERIFICATION_REQUESTED" as const,
+          message: `Dokumen identitas baru (${input.document_type}) telah diupload dan menunggu verifikasi.`,
+        })),
+      });
+    }
+
+    return result;
   },
 
   /**
@@ -130,10 +145,25 @@ export const identityService = {
       timestamp: new Date(),
     });
 
-    return identityRepo.updateVerificationStatus(
+    const result = await identityRepo.updateVerificationStatus(
       documentId,
       status as VerificationStatus,
       adminId
     );
+
+    // Notifikasi ke user
+    const notifMessage = status === "VERIFIED"
+      ? "Dokumen identitas Anda telah berhasil diverifikasi oleh admin. Anda sekarang dapat melakukan booking."
+      : "Dokumen identitas Anda ditolak oleh admin. Silakan upload ulang dokumen yang valid.";
+
+    await prisma.notification.create({
+      data: {
+        user_id: document.user_id,
+        type: status === "VERIFIED" ? "IDENTITY_VERIFIED" : "IDENTITY_REJECTED",
+        message: notifMessage,
+      },
+    });
+
+    return result;
   },
 };

@@ -3,8 +3,9 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model User {
@@ -18,6 +19,10 @@ model User {
   created_at           DateTime           @default(now())
   email_verified       Boolean            @default(false)
   google_id            String?            @unique
+  address              String?
+  is_blocked           Boolean            @default(false)
+  blocked_reason       String?
+  blocked_at           DateTime?
   verification_status  VerificationStatus @default(PENDING)
   confirmed_agreements Agreement[]        @relation("ConfirmedAgreements")
   bookings             Booking[]
@@ -28,6 +33,7 @@ model User {
   reports              Report[]
   reviews              Review[]
   unit_status_changes  UnitStatusLog[]    @relation("UnitStatusChanges")
+  reviewed_extensions  ExtensionRequest[] @relation("ReviewedExtensions")
 
   @@map("users")
 }
@@ -105,6 +111,7 @@ model Booking {
   invoices              Invoice[]
   notifications         Notification[]
   review                Review?
+  extension_requests    ExtensionRequest[]
 
   @@map("bookings")
 }
@@ -251,13 +258,14 @@ model IdentityDocument {
 }
 
 model OtpCode {
-  id         String   @id @default(cuid())
-  email      String
-  code       String
-  purpose    String
-  expires_at DateTime
-  used       Boolean  @default(false)
-  created_at DateTime @default(now())
+  id            String   @id @default(cuid())
+  email         String
+  code          String
+  purpose       String
+  expires_at    DateTime
+  used          Boolean  @default(false)
+  attempt_count Int      @default(0)
+  created_at    DateTime @default(now())
 
   @@index([email, purpose])
   @@map("otp_codes")
@@ -325,6 +333,17 @@ enum NotificationType {
   BOOKING_ACTIVE
   RENEWAL_REMINDER
   RE_VERIFICATION_REQUESTED
+  BOOKING_PENDING
+  PAYMENT_RECEIVED
+  REPORT_SUBMITTED
+  BOOKING_CANCELLED
+  IDENTITY_VERIFIED
+  IDENTITY_REJECTED
+  BOOKING_APPROVED
+  BOOKING_REJECTED
+  EXTENSION_APPROVED
+  EXTENSION_REJECTED
+  ACCOUNT_BLOCKED
 }
 
 enum ReportType {
@@ -347,5 +366,28 @@ enum DocumentType {
 enum VerificationStatus {
   PENDING
   VERIFIED
+  REJECTED
+}
+
+model ExtensionRequest {
+  id              String                  @id @default(cuid())
+  booking_id      String
+  extra_months    Int
+  status          ExtensionRequestStatus  @default(PENDING)
+  admin_note      String?
+  reviewed_by     String?
+  reviewed_at     DateTime?
+  created_at      DateTime                @default(now())
+  booking         Booking                 @relation(fields: [booking_id], references: [id])
+  reviewer        User?                   @relation("ReviewedExtensions", fields: [reviewed_by], references: [id])
+
+  @@index([booking_id])
+  @@index([status])
+  @@map("extension_requests")
+}
+
+enum ExtensionRequestStatus {
+  PENDING
+  APPROVED
   REJECTED
 }

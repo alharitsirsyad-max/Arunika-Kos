@@ -54,6 +54,7 @@ export async function POST(req: NextRequest) {
     }
 
     const userId = session.user!.id!;
+    const role = (session.user as { role: string }).role;
 
     // Cek ketersediaan kontak darurat sebelum booking
     const emergencyContactCount = await prisma.emergencyContact.count({
@@ -66,7 +67,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const booking = await bookingService.createBooking(userId, parsed.data);
+    const booking = await bookingService.createBooking(userId, parsed.data, role);
 
     return apiResponse.created(booking, "Booking berhasil dibuat");
   } catch (error) {

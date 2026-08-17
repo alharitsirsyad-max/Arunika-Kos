@@ -24,6 +24,7 @@ function getClientIp(req: NextRequest): string {
 const RATE_LIMITED_PATHS = [
   "/api/auth/callback/credentials",
   "/api/auth/register",
+  "/api/auth/otp/send",
 ];
 
 export default auth(async (req) => {
@@ -49,6 +50,17 @@ export default auth(async (req) => {
         },
         { status: 429 }
       );
+    }
+  }
+
+  // ─── Cek user diblokir ───────────────────────────────────────────────────
+  if (isLoggedIn) {
+    const isBlocked = (session?.user as { is_blocked?: boolean })?.is_blocked;
+    if (isBlocked) {
+      // Izinkan akses ke halaman logout saja
+      if (!nextUrl.pathname.startsWith("/api/auth/signout") && !nextUrl.pathname.startsWith("/login")) {
+        return NextResponse.redirect(new URL("/login?error=blocked", nextUrl.origin));
+      }
     }
   }
 
@@ -81,5 +93,6 @@ export const config = {
     "/dashboard/:path*",
     "/api/auth/callback/credentials",
     "/api/auth/register",
+    "/api/auth/otp/send",
   ],
 };

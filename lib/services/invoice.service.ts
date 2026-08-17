@@ -166,30 +166,56 @@ export const invoiceService = {
           data: { status: "PAID", receipt_number: receiptNumber },
         });
 
-        // 2. Update Booking.status → DP_PAID
-        await tx.booking.update({
-          where: { id: invoice.booking.id },
-          data: { status: "DP_PAID" },
-        });
-
-        // 3. Update RoomUnit.status → RESERVED
-        await tx.roomUnit.update({
-          where: { id: invoice.booking.room_unit_id },
-          data: { status: "RESERVED" },
-        });
-
-        // 3b. Buat Agreement otomatis jika belum ada
-        // Gunakan start_date dan total_price dari booking sebagai kesepakatan
-        const existingAgreement = await tx.agreement.findFirst({
-          where: { booking_id: invoice.booking.id },
-        });
-
-        // Ambil data booking untuk start_date dan total_price
+        // Ambil start_date booking untuk cek apakah perlu langsung aktif
         const bookingData = await tx.booking.findUnique({
           where: { id: invoice.booking.id },
           select: { start_date: true, total_price: true, room_unit_id: true },
         });
 
+        const now = new Date();
+        const todayUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+        const startDate = bookingData?.start_date ?? new Date(0);
+        const startDateUTC = new Date(Date.UTC(
+          startDate.getUTCFullYear(),
+          startDate.getUTCMonth(),
+          startDate.getUTCDate()
+        ));
+        const startDateReached = startDateUTC <= todayUTC;
+
+        if (startDateReached) {
+          // Tanggal mulai sudah tiba → langsung ACTIVE + OCCUPIED
+          await tx.booking.update({
+            where: { id: invoice.booking.id },
+            data: { status: "ACTIVE" },
+          });
+          await tx.roomUnit.update({
+            where: { id: invoice.booking.room_unit_id },
+            data: { status: "OCCUPIED" },
+          });
+          await tx.notification.create({
+            data: {
+              user_id: invoice.booking.user_id,
+              type: "BOOKING_ACTIVE",
+              message: "Status sewa Anda kini AKTIF. Kamar resmi menjadi hak Anda.",
+              related_booking_id: invoice.booking.id,
+            },
+          });
+        } else {
+          // Tanggal mulai belum tiba → DP_PAID + RESERVED, tunggu cron
+          await tx.booking.update({
+            where: { id: invoice.booking.id },
+            data: { status: "DP_PAID" },
+          });
+          await tx.roomUnit.update({
+            where: { id: invoice.booking.room_unit_id },
+            data: { status: "RESERVED" },
+          });
+        }
+
+        // Buat Agreement otomatis sebagai catatan
+        const existingAgreement = await tx.agreement.findFirst({
+          where: { booking_id: invoice.booking.id },
+        });
         if (!existingAgreement && bookingData) {
           await tx.agreement.create({
             data: {
@@ -203,39 +229,7 @@ export const invoiceService = {
           });
         }
 
-        // 3c. Cek apakah start_date adalah hari ini atau sudah lewat
-        // Jika ya, langsung aktifkan booking (tidak perlu tunggu cron)
-        const now = new Date();
-        const todayUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-        const startDate = bookingData?.start_date ?? new Date(0);
-        const startDateUTC = new Date(Date.UTC(
-          startDate.getUTCFullYear(),
-          startDate.getUTCMonth(),
-          startDate.getUTCDate()
-        ));
-
-        if (startDateUTC <= todayUTC) {
-          // Tanggal masuk adalah hari ini atau sudah lewat → langsung ACTIVE
-          await tx.booking.update({
-            where: { id: invoice.booking.id },
-            data: { status: "ACTIVE" },
-          });
-          await tx.roomUnit.update({
-            where: { id: invoice.booking.room_unit_id },
-            data: { status: "OCCUPIED" },
-          });
-          // Notifikasi BOOKING_ACTIVE
-          await tx.notification.create({
-            data: {
-              user_id: invoice.booking.user_id,
-              type: "BOOKING_ACTIVE",
-              message: `Status sewa Anda kini AKTIF. Kamar resmi menjadi hak Anda.`,
-              related_booking_id: invoice.booking.id,
-            },
-          });
-        }
-
-        // 4. Cari dan expire semua booking PENDING/DP_PENDING lain pada unit yang sama
+        // Expire semua booking PENDING/DP_PENDING lain pada unit yang sama
         const otherBookings = await tx.booking.findMany({
           where: {
             room_unit_id: invoice.booking.room_unit_id,
@@ -245,19 +239,29 @@ export const invoiceService = {
           select: { id: true, user_id: true },
         });
 
+        // Notifikasi ke semua admin — pembayaran DP diterima
+        const adminsForPayment = await tx.user.findMany({ where: { role: "ADMIN" }, select: { id: true } });
+        if (adminsForPayment.length > 0) {
+          await tx.notification.createMany({
+            data: adminsForPayment.map((admin) => ({
+              user_id: admin.id,
+              type: "PAYMENT_RECEIVED" as const,
+              message: `Pembayaran DP dari user telah diterima untuk booking ID ${invoice.booking.id}.`,
+              related_booking_id: invoice.booking.id,
+            })),
+          });
+        }
+
         if (otherBookings.length > 0) {
           await tx.booking.updateMany({
             where: { id: { in: otherBookings.map((b) => b.id) } },
             data: { status: "EXPIRED" },
           });
-
-          // 5. Kirim notifikasi BOOKING_EXPIRED ke user yang terdampak
           await tx.notification.createMany({
             data: otherBookings.map((b) => ({
               user_id: b.user_id,
               type: "BOOKING_EXPIRED" as const,
-              message:
-                "Kamar yang Anda pesan telah diambil oleh penyewa lain yang lebih cepat membayar DP.",
+              message: "Kamar yang Anda pesan telah diambil oleh penyewa lain yang lebih cepat membayar DP.",
               related_booking_id: b.id,
             })),
           });
@@ -312,7 +316,10 @@ export const invoiceService = {
               select: { name: true },
             },
             room_unit: {
-              select: { room_number: true },
+              select: {
+                room_number: true,
+                room: { select: { period_months: true } },
+              },
             },
             agreement: {
               select: { agreed_start_date: true },
@@ -399,27 +406,30 @@ export const invoiceService = {
       "Juli", "Agustus", "September", "Oktober", "November", "Desember",
     ];
 
-    const durationMonths = invoice.extra_duration_months ?? invoice.booking.duration_periods;
+    // Untuk DP: 1 periode × period_months = total bulan
+    // Untuk EXTENSION: extra_duration_months bulan
+    const periodMonths = invoice.booking.room_unit.room.period_months ?? 3;
+    const durationMonths = invoice.type === "DP"
+      ? periodMonths  // DP = 1 periode penuh
+      : (invoice.extra_duration_months ?? invoice.booking.duration_periods);
 
-    const formatPeriode = (startDate: Date, dur: number): string => {
-      const start = new Date(startDate);
-      const end = new Date(startDate);
-      end.setMonth(end.getMonth() + dur - 1);
-      const startBulan = BULAN_ID[start.getMonth()];
-      const endBulan = BULAN_ID[end.getMonth()];
-      const endTahun = end.getFullYear();
-      if (start.getMonth() === end.getMonth() && start.getFullYear() === end.getFullYear()) {
-        return `${startBulan} ${endTahun}`;
+    // Format periode sebagai daftar bulan: "Agustus, September, Oktober 2026"
+    const formatPeriode = (startDate: Date, totalBulan: number): string => {
+      const bulanList: string[] = [];
+      let tahunAkhir = startDate.getFullYear();
+      for (let i = 0; i < totalBulan; i++) {
+        const d = new Date(startDate);
+        d.setMonth(d.getMonth() + i);
+        bulanList.push(BULAN_ID[d.getMonth()]);
+        tahunAkhir = d.getFullYear();
       }
-      if (start.getFullYear() === end.getFullYear()) {
-        return `${startBulan} – ${endBulan} ${endTahun}`;
-      }
-      return `${startBulan} ${start.getFullYear()} – ${endBulan} ${endTahun}`;
+      return `${bulanList.join(", ")} ${tahunAkhir}`;
     };
 
-    const hitungTanggalBerikutnya = (startDate: Date, dur: number): string => {
+    // Tanggal berikutnya = start + period_months (1 periode penuh)
+    const hitungTanggalBerikutnya = (startDate: Date, totalBulan: number): string => {
       const next = new Date(startDate);
-      next.setMonth(next.getMonth() + dur);
+      next.setMonth(next.getMonth() + totalBulan);
       return next.toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" });
     };
 

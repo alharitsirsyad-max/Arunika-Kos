@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { bookingRepo } from "@/lib/repositories/booking.repo";
 import { roomRepo } from "@/lib/repositories/room.repo";
 import { identityRepo } from "@/lib/repositories/identity.repo";
+import { notifyAllAdmins } from "@/lib/utils/notify";
 import {
   ConflictError,
   ForbiddenError,
@@ -108,7 +109,15 @@ const bookingMutationSelect = {
 } as const;
 
 export const bookingService = {
-  async createBooking(userId: string, input: CreateBookingInput) {
+  async createBooking(userId: string, input: CreateBookingInput, role: string = 'USER') {
+    // Admin tidak bisa booking
+    if (role === 'ADMIN') {
+      throw new ForbiddenError(
+        "Admin tidak dapat melakukan booking kamar",
+        "ADMIN_CANNOT_BOOK"
+      );
+    }
+
     // Identity gate — user must have a VERIFIED document
     const verifiedDoc = await identityRepo.findVerifiedByUserId(userId);
     if (!verifiedDoc) {
@@ -159,6 +168,14 @@ export const bookingService = {
       },
       select: bookingMutationSelect,
     });
+
+    // Notifikasi ke semua admin — ada booking baru
+    await notifyAllAdmins(
+      prisma,
+      "BOOKING_PENDING",
+      `Booking baru dari ${booking.user.name} untuk ${booking.room_unit.room.name} menunggu persetujuan.`,
+      booking.id
+    );
 
     return booking;
   },
@@ -211,52 +228,44 @@ export const bookingService = {
     return booking;
   },
 
-  /**
-   * Cancel a booking owned by the given user.
-   *
-   * Business rules (Requirements 5.3, 5.4, 5.5, 5.6):
-   * 1. Booking must exist → NotFoundError
-   * 2. Booking must belong to userId → ForbiddenError 403
-   * 3. Booking status must be PENDING or DP_PENDING → ConflictError 409
-   * 4. Wrapped in prisma.$transaction():
-   *    a. Set Booking.status → CANCELLED (+ store cancellation_message)
-   *    b. If status was DP_PENDING: find related DP invoice and set it to CANCELLED
-   * 5. Return updated booking
-   */
-  async cancelBooking(
-    userId: string,
-    bookingId: string,
-    cancellationMessage?: string
+/**
+ * Cancel a booking.
+ * If role === 'ADMIN', skip ownership check.
+ * If role === 'USER', booking must belong to userId.
+ */
+async cancelBooking(
+  userId: string,
+  bookingId: string,
+  cancellationMessage?: string,
+  role: string = 'USER'
+) {
+  const booking = await bookingRepo.findById(bookingId);
+
+  if (!booking) {
+    throw new NotFoundError(`Booking dengan ID ${bookingId} tidak ditemukan`);
+  }
+
+  // Ownership check — admin bisa cancel booking siapapun
+  if (role !== 'ADMIN' && booking.user_id !== userId) {
+    throw new ForbiddenError(
+      "Anda tidak memiliki akses untuk membatalkan booking ini"
+    );
+  }
+
+  // Status check — hanya PENDING atau DP_PENDING yang bisa dicancel
+  const cancellableStatuses = ["PENDING", "DP_PENDING"] as const;
+  if (
+    !cancellableStatuses.includes(
+      booking.status as (typeof cancellableStatuses)[number]
+    )
   ) {
-    // 1. Fetch booking
-    const booking = await bookingRepo.findById(bookingId);
+    throw new ConflictError(
+      `Booking tidak dapat dibatalkan karena statusnya ${booking.status}. Hanya booking dengan status PENDING atau DP_PENDING yang dapat dibatalkan.`,
+      "BOOKING_NOT_CANCELLABLE"
+    );
+  }
 
-    // 2. Not found
-    if (!booking) {
-      throw new NotFoundError(`Booking dengan ID ${bookingId} tidak ditemukan`);
-    }
-
-    // 3. Ownership check — Requirements 5.6
-    if (booking.user_id !== userId) {
-      throw new ForbiddenError(
-        "Anda tidak memiliki akses untuk membatalkan booking ini"
-      );
-    }
-
-    // 4. Status check — Requirements 5.3
-    const cancellableStatuses = ["PENDING", "DP_PENDING"] as const;
-    if (
-      !cancellableStatuses.includes(
-        booking.status as (typeof cancellableStatuses)[number]
-      )
-    ) {
-      throw new ConflictError(
-        `Booking tidak dapat dibatalkan karena statusnya ${booking.status}. Hanya booking dengan status PENDING atau DP_PENDING yang dapat dibatalkan.`,
-        "BOOKING_NOT_CANCELLABLE"
-      );
-    }
-
-    const initialStatus = booking.status;
+  const initialStatus = booking.status;
 
     // 5. Atomic transaction — Requirements 5.4, 5.5
     const updatedBooking = await prisma.$transaction(async (tx) => {
@@ -270,7 +279,36 @@ export const bookingService = {
         select: bookingMutationSelect,
       });
 
-      // b. If status was DP_PENDING, cancel the related DP invoice — Requirements 5.4
+      // b. Reset unit status ke AVAILABLE
+      await tx.roomUnit.update({
+        where: { id: booking.room_unit_id },
+        data: { status: "AVAILABLE" },
+      });
+
+      // c. Notifikasi ke semua admin — user batalkan booking
+      const admins = await tx.user.findMany({ where: { role: "ADMIN" }, select: { id: true } });
+      if (admins.length > 0) {
+        await tx.notification.createMany({
+          data: admins.map((admin) => ({
+            user_id: admin.id,
+            type: "BOOKING_CANCELLED" as const,
+            message: `User ${booking.user?.name ?? ''} membatalkan booking untuk ${booking.room_unit?.room?.name ?? ''}.`,
+            related_booking_id: bookingId,
+          })),
+        });
+      }
+
+      // d. Notifikasi ke user — booking dibatalkan
+      await tx.notification.create({
+        data: {
+          user_id: booking.user_id,
+          type: "BOOKING_CANCELLED",
+          message: "Booking Anda telah berhasil dibatalkan.",
+          related_booking_id: bookingId,
+        },
+      });
+
+      // e. If status was DP_PENDING, cancel the related DP invoice — Requirements 5.4
       if (initialStatus === "DP_PENDING") {
         const dpInvoice = await tx.invoice.findFirst({
           where: {
@@ -335,7 +373,23 @@ export const bookingService = {
           select: bookingMutationSelect,
         });
 
-        // 2. Cek apakah Invoice DP sudah ada (hindari duplikasi)
+        // 2. Set unit → RESERVED
+        await tx.roomUnit.update({
+          where: { id: booking.room_unit_id },
+          data: { status: "RESERVED" },
+        });
+
+        // 3. Notifikasi ke user — booking disetujui
+        await tx.notification.create({
+          data: {
+            user_id: booking.user_id,
+            type: "BOOKING_APPROVED",
+            message: `Booking Anda untuk ${updated.room_unit.room.name} telah disetujui. Silakan lakukan pembayaran DP.`,
+            related_booking_id: bookingId,
+          },
+        });
+
+        // 4. Cek apakah Invoice DP sudah ada (hindari duplikasi)
         const existingInvoice = await tx.invoice.findFirst({
           where: { booking_id: bookingId, type: "DP" },
         });
@@ -366,13 +420,31 @@ export const bookingService = {
       );
     }
 
-    const [updatedBooking] = await prisma.$transaction([
-      prisma.booking.update({
+    const updatedBooking = await prisma.$transaction(async (tx) => {
+      const rejected = await tx.booking.update({
         where: { id: bookingId },
         data: { status: "REJECTED", admin_note: input.admin_note ?? null },
         select: bookingMutationSelect,
-      }),
-    ]);
+      });
+
+      // Reset unit ke AVAILABLE saat booking ditolak
+      await tx.roomUnit.update({
+        where: { id: booking.room_unit_id },
+        data: { status: "AVAILABLE" },
+      });
+
+      // Notifikasi ke user — booking ditolak
+      await tx.notification.create({
+        data: {
+          user_id: booking.user_id,
+          type: "BOOKING_REJECTED",
+          message: `Booking Anda untuk ${rejected.room_unit.room.name} telah ditolak.${input.admin_note ? ` Alasan: ${input.admin_note}` : ''}`,
+          related_booking_id: bookingId,
+        },
+      });
+
+      return rejected;
+    });
 
     return updatedBooking;
   },

@@ -5,21 +5,39 @@ import type { Room } from '@/types/api'
 interface RoomCardProps {
   room: Room
   onBooking: (room: Room) => void
-  /** Apakah user sudah punya booking aktif */
   userHasActiveBooking?: boolean
+  isAdmin?: boolean
 }
 
-export function RoomCard({ room, onBooking, userHasActiveBooking }: RoomCardProps) {
+export function RoomCard({ room, onBooking, userHasActiveBooking, isAdmin }: RoomCardProps) {
   const availableUnits = room.available_units ?? 0
-  // RESERVED and OCCUPIED units are both unavailable — Requirements 10.3, 10.4
-  // available_units from API already excludes RESERVED and OCCUPIED (only AVAILABLE counts)
+  const reservedUnits = (room as { reserved_units?: number }).reserved_units ?? 0
   const isFull = availableUnits === 0
-  const isDisabled = isFull || userHasActiveBooking
+  const isDisabled = isFull || userHasActiveBooking || isAdmin
 
+  // Badge ketersediaan
+  let badgeLabel: string
+  let badgeClass: string
+
+  if (availableUnits > 0) {
+    badgeLabel = `${availableUnits} unit tersedia`
+    badgeClass = availableUnits <= 2 ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700'
+  } else if (reservedUnits > 0) {
+    badgeLabel = 'Dipesan'
+    badgeClass = 'bg-amber-100 text-amber-700'
+  } else {
+    badgeLabel = 'Penuh'
+    badgeClass = 'bg-red-100 text-red-700'
+  }
+
+  // Tombol booking
   let buttonLabel = 'Booking'
   let buttonTitle = ''
 
-  if (isFull) {
+  if (isAdmin) {
+    buttonLabel = 'Mode Admin'
+    buttonTitle = 'Admin tidak dapat melakukan booking'
+  } else if (isFull) {
     buttonLabel = 'Tidak Tersedia'
     buttonTitle = 'Semua unit kamar ini sudah terisi atau dipesan'
   } else if (userHasActiveBooking) {
@@ -44,26 +62,26 @@ export function RoomCard({ room, onBooking, userHasActiveBooking }: RoomCardProp
       )}
 
       <div className="flex flex-col flex-1 gap-3 p-4">
-        {/* Name + unit availability */}
+        {/* Name + unit availability badge */}
         <div className="flex items-start justify-between gap-2">
           <h2 className="text-base font-semibold leading-tight">{room.name}</h2>
           {room.total_units !== undefined && (
-            <span className={`text-xs px-2 py-0.5 rounded-full shrink-0 ${
-              isFull
-                ? 'bg-red-100 text-red-700'
-                : availableUnits <= 2
-                  ? 'bg-yellow-100 text-yellow-700'
-                  : 'bg-green-100 text-green-700'
-            }`}>
-              {isFull ? 'Penuh' : `${availableUnits} unit tersedia`}
+            <span className={`text-xs px-2 py-0.5 rounded-full shrink-0 ${badgeClass}`}>
+              {badgeLabel}
             </span>
           )}
         </div>
 
-        {/* Price — Requirement 1.8: format "Rp[harga] / [period_months] bulan" */}
-        <p className="text-lg font-bold text-primary">
-          {formatRoomPrice(room.price, room.period_months ?? 1)}
-        </p>
+        {/* Price */}
+        <div className="flex flex-col gap-0.5">
+          <p className="text-lg font-bold text-primary">
+            {formatRoomPrice(room.price, room.period_months ?? 1)}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            DP awal: <span className="font-medium text-foreground">Rp1.000.000</span>
+            {' · '}total 1 periode: <span className="font-medium text-foreground">Rp{room.price.toLocaleString('id-ID')}</span>
+          </p>
+        </div>
 
         {/* Description */}
         {room.description && (

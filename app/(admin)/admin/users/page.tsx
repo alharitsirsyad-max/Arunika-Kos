@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useUsers } from '@/hooks/useUsers'
 import { UserDetailModal } from '@/components/admin/UserDetailModal'
 import { LoadingSpinner } from '@/components/shared/LoadingSpinner'
@@ -12,8 +12,15 @@ const formatDate = (d: string) =>
   new Date(d).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })
 
 export default function AdminUsersPage() {
+  const [searchInput, setSearchInput] = useState('')
   const [search, setSearch] = useState('')
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null)
+
+  // Debounce: hanya query DB setelah user berhenti mengetik 400ms
+  useEffect(() => {
+    const timer = setTimeout(() => setSearch(searchInput), 400)
+    return () => clearTimeout(timer)
+  }, [searchInput])
 
   const { data: users, isLoading, isError, error, refetch } = useUsers(search || undefined)
 
@@ -30,8 +37,8 @@ export default function AdminUsersPage() {
       <input
         type="text"
         placeholder="Cari nama atau email..."
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
+        value={searchInput}
+        onChange={(e) => setSearchInput(e.target.value)}
         className="h-9 w-full max-w-sm rounded-lg border bg-background px-3 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
       />
 

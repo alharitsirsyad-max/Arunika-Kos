@@ -89,6 +89,7 @@ export function RegisterForm() {
           name: formData.name,
           password: formData.password,
           phone: formData.phone,
+          address: formData.address,
         }),
       })
       const json = await res.json()
@@ -98,20 +99,9 @@ export function RegisterForm() {
         return
       }
 
-      // Auto-login setelah registrasi berhasil — langsung masuk ke dashboard
-      const result = await signIn('credentials', {
-        email: formData.email,
-        password: formData.password,
-        redirect: false,
-      })
-
-      if (result?.ok) {
-        router.push('/dashboard')
-        router.refresh()
-      } else {
-        // Akun berhasil dibuat tapi auto-login gagal — fallback ke halaman login
-        router.push('/login?success=registered')
-      }
+      // Akun berhasil dibuat — arahkan ke login dengan pesan sukses
+      // Auto-login via password tidak lagi tersedia (2FA hardening: JWT hanya dari OTP)
+      router.push('/login?success=registered')
     } catch {
       setOtpError('Terjadi kesalahan. Coba lagi.')
     } finally {
@@ -229,6 +219,14 @@ export function RegisterForm() {
       <Field label="Nomor Telepon" error={errors.phone?.message}>
         <input id="phone" type="tel" autoComplete="tel" placeholder="08xxxxxxxxxx"
           aria-invalid={!!errors.phone} className={inputCls(!!errors.phone)} {...register('phone')} />
+      </Field>
+
+      <Field label="Alamat Domisili" error={errors.address?.message}>
+        <textarea id="address" autoComplete="street-address" placeholder="Jl. Contoh No. 1, Kota, Provinsi"
+          rows={2}
+          aria-invalid={!!errors.address}
+          className={cn(inputCls(!!errors.address), 'h-auto py-2 resize-none')}
+          {...register('address')} />
       </Field>
 
       <Button type="submit" disabled={isSubmitting || sending} className="w-full" size="lg">

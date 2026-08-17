@@ -74,3 +74,69 @@ export async function checkRateLimit(ip: string): Promise<RateLimitResult> {
 
   return { allowed: success, remaining, reset };
 }
+
+/**
+ * Instance Ratelimit per-email yang di-lazy-init.
+ *
+ * Konfigurasi: slidingWindow(10, '15m') per email — Requirements 4.1, 4.3
+ */
+let emailRatelimit: Ratelimit | null = null;
+
+function getEmailRatelimiter(): Ratelimit | null {
+  // Graceful degradation: skip rate limiting jika env vars tidak ada (Requirement 4.4)
+  if (
+    !process.env.UPSTASH_REDIS_REST_URL ||
+    !process.env.UPSTASH_REDIS_REST_TOKEN
+  ) {
+    return null;
+  }
+
+  if (!emailRatelimit) {
+    const redis = new Redis({
+      url: process.env.UPSTASH_REDIS_REST_URL,
+      token: process.env.UPSTASH_REDIS_REST_TOKEN,
+    });
+
+    emailRatelimit = new Ratelimit({
+      redis,
+      limiter: Ratelimit.slidingWindow(10, "15 m"),
+      analytics: false,
+      prefix: "arunika:ratelimit:login:email",
+    });
+  }
+
+  return emailRatelimit;
+}
+
+/**
+ * Memeriksa rate limit berbasis email untuk endpoint login credentials.
+ *
+ * Rate limit ini independen dari rate limit per-IP — keduanya aktif bersamaan
+ * (Requirement 4.2). Jika env vars Upstash tidak dikonfigurasi, selalu
+ * mengembalikan `allowed: true` (graceful degradation — Requirement 4.4).
+ *
+ * @param email - Email address dari user yang mencoba login
+ * @returns RateLimitResult
+ *
+ * @example
+ * const result = await checkEmailRateLimit('user@example.com')
+ * if (!result.allowed) {
+ *   return apiResponse.error('Coba lagi setelah 15 menit', 429, 'RATE_LIMIT_EXCEEDED')
+ * }
+ */
+export async function checkEmailRateLimit(
+  email: string
+): Promise<RateLimitResult> {
+  const limiter = getEmailRatelimiter();
+
+  // Jika tidak ada limiter (env vars tidak ada), izinkan semua request
+  if (!limiter) {
+    return { allowed: true, remaining: 10, reset: 0 };
+  }
+
+  const { success, remaining, reset } = await limiter.limit(
+    email.toLowerCase()
+  );
+
+  return { allowed: success, remaining, reset };
+}

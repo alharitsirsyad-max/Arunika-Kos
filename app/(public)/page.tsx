@@ -30,6 +30,8 @@ export default function HomePage() {
   const { data: session, status } = useSession()
   const isLoading = status === 'loading'
   const isLoggedIn = !!session
+  const role = (session?.user as { role?: string })?.role
+  const dashboardHref = role === 'ADMIN' ? '/admin' : '/dashboard'
 
   return (
     <main className="flex flex-col items-center">
@@ -52,7 +54,7 @@ export default function HomePage() {
           {isLoading ? (
             <div className="h-11 w-36 animate-pulse rounded-md bg-muted" />
           ) : isLoggedIn ? (
-            <Button render={<Link href="/dashboard" />} nativeButton={false} variant="outline" size="lg">
+            <Button render={<Link href={dashboardHref} />} nativeButton={false} variant="outline" size="lg">
               Ke Dashboard
             </Button>
           ) : (

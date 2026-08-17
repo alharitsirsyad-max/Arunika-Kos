@@ -153,8 +153,8 @@ export function BookingStepIndicator({
           } else if (idx < effectiveIndex) {
             state = 'completed'
           } else if (idx === effectiveIndex) {
-            // Step ACTIVE dianggap completed juga (booking sudah aktif = berhasil)
-            state = status === 'ACTIVE' ? 'completed' : 'current'
+            // DP_PAID dan ACTIVE dianggap completed (milestone tercapai)
+            state = (status === 'ACTIVE' || status === 'DP_PAID') ? 'completed' : 'current'
           } else {
             state = 'future'
           }

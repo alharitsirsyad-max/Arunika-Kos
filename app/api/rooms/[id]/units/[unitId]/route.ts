@@ -8,8 +8,8 @@ import type { UnitStatus } from "@prisma/client";
 
 type Params = { params: Promise<{ id: string; unitId: string }> };
 
-// Hanya dua pilihan: admin hanya bisa ubah ke AVAILABLE atau OCCUPIED secara manual
-const VALID_STATUSES: UnitStatus[] = ["AVAILABLE", "OCCUPIED"];
+// Hanya tiga pilihan yang valid untuk admin
+const VALID_STATUSES: UnitStatus[] = ["AVAILABLE", "OCCUPIED", "RESERVED"];
 
 export async function PATCH(req: NextRequest, { params }: Params) {
   try {

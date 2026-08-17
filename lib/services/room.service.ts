@@ -204,36 +204,63 @@ export const roomService = {
 
       // 4. Cascade logic based on transition
       if (oldStatus === "OCCUPIED" && newStatus === "AVAILABLE") {
-        // Find the ACTIVE booking for this unit and mark it DONE
+        // Cari booking ACTIVE di unit ini, lalu kick (sama dengan /api/bookings/:id/kick)
         const activeBooking = await tx.booking.findFirst({
           where: { room_unit_id: unitId, status: "ACTIVE" },
+          include: { invoices: { include: { payment: true } } },
         });
         if (activeBooking) {
+          // Hapus payment dan invoice UNPAID
+          for (const inv of activeBooking.invoices) {
+            if (inv.status === "UNPAID") {
+              if (inv.payment) {
+                await tx.payment.delete({ where: { id: inv.payment.id } });
+              }
+              await tx.invoice.delete({ where: { id: inv.id } });
+            }
+          }
+          // Set booking → DONE
           await tx.booking.update({
             where: { id: activeBooking.id },
-            data: { status: "DONE" },
+            data: {
+              status: "DONE",
+              admin_note: note ?? "Sewa diakhiri oleh admin (status unit diubah).",
+            },
           });
         }
       } else if (oldStatus === "RESERVED" && newStatus === "AVAILABLE") {
-        // Find the DP_PAID booking for this unit and mark it REJECTED
-        const dpPaidBooking = await tx.booking.findFirst({
-          where: { room_unit_id: unitId, status: "DP_PAID" },
+        // Cari booking DP_PENDING atau DP_PAID di unit ini
+        const reservedBooking = await tx.booking.findFirst({
+          where: { room_unit_id: unitId, status: { in: ["DP_PENDING", "DP_PAID"] } },
         });
-        if (dpPaidBooking) {
+        if (reservedBooking) {
           await tx.booking.update({
-            where: { id: dpPaidBooking.id },
-            data: { status: "REJECTED" },
+            where: { id: reservedBooking.id },
+            data: { status: "REJECTED", admin_note: note ?? "Booking dibatalkan oleh admin (status unit diubah)." },
           });
 
-          // Find the DP invoice linked to this booking and mark it REFUND_PENDING
-          const dpInvoice = await tx.invoice.findFirst({
-            where: { booking_id: dpPaidBooking.id, type: "DP" },
-          });
-          if (dpInvoice) {
-            await tx.invoice.update({
-              where: { id: dpInvoice.id },
-              data: { status: "REFUND_PENDING" },
+          // Jika DP sudah dibayar → invoice REFUND_PENDING
+          if (reservedBooking.status === "DP_PAID") {
+            const dpInvoice = await tx.invoice.findFirst({
+              where: { booking_id: reservedBooking.id, type: "DP" },
             });
+            if (dpInvoice) {
+              await tx.invoice.update({
+                where: { id: dpInvoice.id },
+                data: { status: "REFUND_PENDING" },
+              });
+            }
+          } else {
+            // DP_PENDING → cancel invoice saja
+            const dpInvoice = await tx.invoice.findFirst({
+              where: { booking_id: reservedBooking.id, type: "DP", status: { not: "CANCELLED" } },
+            });
+            if (dpInvoice) {
+              await tx.invoice.update({
+                where: { id: dpInvoice.id },
+                data: { status: "CANCELLED" },
+              });
+            }
           }
         }
       }

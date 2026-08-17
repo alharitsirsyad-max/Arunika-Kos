@@ -87,7 +87,7 @@ export const reportService = {
       );
     }
 
-    return reportRepo.create({
+    const report = await reportRepo.create({
       user_id: userId,
       room_unit_id: roomUnitId,
       type: input.type,
@@ -95,6 +95,20 @@ export const reportService = {
       description: input.description,
       image_url: input.image_url,
     });
+
+    // Notifikasi ke semua admin — laporan baru masuk
+    const admins = await prisma.user.findMany({ where: { role: "ADMIN" }, select: { id: true } });
+    if (admins.length > 0) {
+      await prisma.notification.createMany({
+        data: admins.map((admin) => ({
+          user_id: admin.id,
+          type: "REPORT_SUBMITTED" as const,
+          message: `Laporan baru: "${input.title}" (${input.type === "ROOM_ISSUE" ? "Masalah Kamar" : "Masalah Website"}) telah dikirim.`,
+        })),
+      });
+    }
+
+    return report;
   },
 
   /**

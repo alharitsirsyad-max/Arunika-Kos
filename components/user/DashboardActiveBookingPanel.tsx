@@ -25,7 +25,6 @@ import { Button } from '@/components/ui/button'
 import { LoadingSpinner } from '@/components/shared/LoadingSpinner'
 import { ErrorMessage } from '@/components/shared/ErrorMessage'
 import { BookingStepIndicator } from '@/components/user/BookingStepIndicator'
-import { AgreementSummary } from '@/components/user/AgreementSummary'
 import { RenewalBanner } from '@/components/user/RenewalBanner'
 import { useBookings } from '@/hooks/useBookings'
 import { ApiError } from '@/lib/api'
@@ -137,11 +136,10 @@ export function DashboardActiveBookingPanel() {
   const roomName = room_unit?.room?.name
   const roomNumber = room_unit?.room_number
 
-  // Kondisi untuk RenewalBanner: ACTIVE + Agreement CONFIRMED + ada tanggal
+  // Kondisi untuk RenewalBanner: ACTIVE + ada tanggal
   const showRenewalBanner =
     status === 'ACTIVE' &&
-    agreement?.status === 'CONFIRMED' &&
-    !!agreement.agreed_start_date &&
+    !!agreement?.agreed_start_date &&
     typeof primaryBooking.duration_periods === 'number' &&
     typeof room_unit?.room?.period_months === 'number'
 
@@ -153,16 +151,7 @@ export function DashboardActiveBookingPanel() {
         <BookingStepIndicator status={status} />
       </div>
 
-      {/* ── Agreement Summary (hanya saat DP_PAID) ── */}
-      {status === 'DP_PAID' && (
-        <AgreementSummary
-          agreement={agreement}
-          roomName={roomName}
-          roomNumber={roomNumber}
-        />
-      )}
-
-      {/* ── Renewal Banner (hanya saat ACTIVE + Agreement CONFIRMED) ── */}
+      {/* ── Renewal Banner (hanya saat ACTIVE) ── */}
       {showRenewalBanner && (
         <RenewalBanner
           bookingStatus={status}

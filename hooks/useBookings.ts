@@ -160,7 +160,7 @@ export function useCancelBooking() {
   return useMutation<{ booking_id: string; status: string }, ApiError, { bookingId: string; adminNote?: string }>({
     mutationFn: ({ bookingId, adminNote }) =>
       apiRequest(`/api/bookings/${bookingId}/cancel`, {
-        method: 'PATCH',
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ admin_note: adminNote }),
       }),

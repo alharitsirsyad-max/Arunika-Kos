@@ -81,6 +81,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const isValid = await compare(parsed.data.password, user.password);
         if (!isValid) return null;
 
+        // Password benar → terbitkan JWT langsung (OTP hanya untuk registrasi)
         return { id: user.id, name: user.name, email: user.email, role: user.role };
       },
     }),
@@ -89,6 +90,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   callbacks: {
     async signIn({ user, account }) {
       if (account?.provider === "google") {
+        if (!user.emailVerified) {
+          console.warn(`[SECURITY] Google login ditolak: email tidak terverifikasi | email=${user.email}`);
+          return false;
+        }
+
         const email = user.email!;
         const name = user.name ?? email.split("@")[0];
         const googleId = account.providerAccountId;
@@ -112,11 +118,27 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       return true;
     },
 
-    async jwt({ token, user, account }) {
+    async jwt({ token, user, account, trigger }) {
+      // Saat pertama login: set id dan role dari user object
       if (user) {
         token.id = user.id;
         token.role = (user as { role?: string }).role ?? "USER";
       }
+
+      // Req 6.2, 6.3: Refresh role dari DB saat token di-update
+      // (trigger === "update" terjadi saat session.update() dipanggil dari client)
+      if (trigger === "update") {
+        const dbUser = await prisma.user.findUnique({
+          where: { id: token.id as string },
+          select: { id: true, role: true, is_blocked: true },
+        });
+        // Req 6.3: Akun dihapus → invalidate token (NextAuth akan hapus cookie sesi)
+        if (!dbUser) return null;
+        if (dbUser.is_blocked) return null; // Akun diblokir → invalidate token
+        token.role = dbUser.role;
+      }
+
+      // Google: refresh id dan role dari DB (untuk menangani first login Google)
       if (account?.provider === "google" && token.email) {
         const dbUser = await prisma.user.findUnique({
           where: { email: token.email as string },
@@ -127,6 +149,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           token.role = dbUser.role;
         }
       }
+
       return token;
     },
 

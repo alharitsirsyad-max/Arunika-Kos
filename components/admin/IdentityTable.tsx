@@ -7,8 +7,9 @@
 
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { ExternalLink } from 'lucide-react'
+import { ExternalLink, Trash2 } from 'lucide-react'
 import { useAllIdentityDocuments, useVerifyIdentityDocument, type AdminIdentityDoc } from '@/hooks/useIdentity'
+import { useQueryClient } from '@tanstack/react-query'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { LoadingSpinner } from '@/components/shared/LoadingSpinner'
 import { ErrorMessage } from '@/components/shared/ErrorMessage'
@@ -16,7 +17,7 @@ import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { UserDetailModal } from '@/components/admin/UserDetailModal'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { ApiError } from '@/lib/api'
+import { ApiError, apiRequest } from '@/lib/api'
 
 const formatDate = (d: string) =>
   new Date(d).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })
@@ -29,7 +30,7 @@ const DOC_TYPE_LABELS: Record<string, string> = {
 
 interface ActionState {
   documentId: string
-  action: 'VERIFIED' | 'REJECTED'
+  action: 'VERIFIED' | 'REJECTED' | 'DELETE'
 }
 
 // ── Row ────────────────────────────────────────────────────────────────────
@@ -46,63 +47,42 @@ function IdentityRow({ doc, onAction, onUserClick }: RowProps) {
       {/* Penyewa */}
       <td className="px-4 py-3 text-sm">
         <div>
-          <button
-            type="button"
-            onClick={() => onUserClick(doc.user_id)}
-            className="font-medium text-primary hover:underline text-left"
-          >
+          <button type="button" onClick={() => onUserClick(doc.user_id)} className="font-medium text-primary hover:underline text-left">
             {doc.user?.name ?? '-'}
           </button>
-          {doc.user?.email && (
-            <p className="text-xs text-muted-foreground">{doc.user.email}</p>
-          )}
+          {doc.user?.email && <p className="text-xs text-muted-foreground">{doc.user.email}</p>}
         </div>
       </td>
-      {/* Jenis Dokumen */}
-      <td className="px-4 py-3 text-sm font-medium">
-        {DOC_TYPE_LABELS[doc.document_type] ?? doc.document_type}
-      </td>
-      {/* Status */}
+      <td className="px-4 py-3 text-sm font-medium">{DOC_TYPE_LABELS[doc.document_type] ?? doc.document_type}</td>
       <td className="px-4 py-3">
         <div className="flex items-center gap-2 flex-wrap">
           <StatusBadge variant="identity" status={doc.verification_status} />
           {doc.verification_status === 'PENDING' && (
-            <Badge variant="outline" className="text-xs border-amber-400 text-amber-700 bg-amber-50">
-              Verifikasi Ulang
-            </Badge>
+            <Badge variant="outline" className="text-xs border-amber-400 text-amber-700 bg-amber-50">Verifikasi Ulang</Badge>
           )}
         </div>
       </td>
-      {/* Tanggal Upload */}
       <td className="px-4 py-3 text-sm text-muted-foreground">{formatDate(doc.created_at)}</td>
-      {/* Lihat Dokumen */}
       <td className="px-4 py-3">
         {doc.document_url ? (
-          <a
-            href={doc.document_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline"
-          >
-            <ExternalLink className="size-3" aria-hidden />
-            Lihat
+          <a href={doc.document_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline">
+            <ExternalLink className="size-3" />Lihat
           </a>
-        ) : (
-          <span className="text-xs text-muted-foreground">-</span>
-        )}
+        ) : <span className="text-xs text-muted-foreground">-</span>}
       </td>
-      {/* Aksi */}
       <td className="px-4 py-3">
-        {doc.verification_status === 'PENDING' && (
-          <div className="flex gap-2">
-            <Button size="sm" onClick={() => onAction({ documentId: doc.id, action: 'VERIFIED' })}>
-              Verifikasi
-            </Button>
-            <Button size="sm" variant="destructive" onClick={() => onAction({ documentId: doc.id, action: 'REJECTED' })}>
-              Tolak
-            </Button>
-          </div>
-        )}
+        <div className="flex gap-2 flex-wrap">
+          {doc.verification_status === 'PENDING' && (
+            <>
+              <Button size="sm" onClick={() => onAction({ documentId: doc.id, action: 'VERIFIED' })}>Verifikasi</Button>
+              <Button size="sm" variant="destructive" onClick={() => onAction({ documentId: doc.id, action: 'REJECTED' })}>Tolak</Button>
+            </>
+          )}
+          <Button size="sm" variant="outline" className="gap-1 text-destructive hover:text-destructive"
+            onClick={() => onAction({ documentId: doc.id, action: 'DELETE' })}>
+            <Trash2 className="size-3" />Hapus
+          </Button>
+        </div>
       </td>
     </tr>
   )
@@ -156,14 +136,14 @@ function IdentityCard({ doc, onAction, onUserClick }: RowProps) {
 
       {doc.verification_status === 'PENDING' && (
         <div className="flex gap-2 pt-1">
-          <Button size="sm" className="flex-1" onClick={() => onAction({ documentId: doc.id, action: 'VERIFIED' })}>
-            Verifikasi
-          </Button>
-          <Button size="sm" variant="destructive" className="flex-1" onClick={() => onAction({ documentId: doc.id, action: 'REJECTED' })}>
-            Tolak
-          </Button>
+          <Button size="sm" className="flex-1" onClick={() => onAction({ documentId: doc.id, action: 'VERIFIED' })}>Verifikasi</Button>
+          <Button size="sm" variant="destructive" className="flex-1" onClick={() => onAction({ documentId: doc.id, action: 'REJECTED' })}>Tolak</Button>
         </div>
       )}
+      <Button size="sm" variant="outline" className="w-full gap-1 text-destructive hover:text-destructive mt-1"
+        onClick={() => onAction({ documentId: doc.id, action: 'DELETE' })}>
+        <Trash2 className="size-3" />Hapus Dokumen
+      </Button>
     </div>
   )
 }
@@ -172,23 +152,42 @@ function IdentityCard({ doc, onAction, onUserClick }: RowProps) {
 
 export function IdentityTable() {
   const { data: docs, isLoading, isError, error, refetch } = useAllIdentityDocuments()
+  const queryClient = useQueryClient()
   const [pending, setPending] = useState<ActionState | null>(null)
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null)
+  const [deleteLoading, setDeleteLoading] = useState(false)
   const verify = useVerifyIdentityDocument(pending?.documentId ?? '')
 
   const handleConfirm = async () => {
     if (!pending) return
+
+    if (pending.action === 'DELETE') {
+      setDeleteLoading(true)
+      try {
+        await apiRequest(`/api/identity-documents/${pending.documentId}`, { method: 'DELETE' })
+        toast.success('Dokumen berhasil dihapus.')
+        queryClient.invalidateQueries({ queryKey: ['identity-documents', 'all'] })
+        refetch()
+      } catch (err) {
+        toast.error(err instanceof ApiError ? err.message : 'Gagal menghapus dokumen.')
+      } finally {
+        setDeleteLoading(false)
+        setPending(null)
+      }
+      return
+    }
+
     try {
       await verify.mutateAsync({ verification_status: pending.action })
-      toast.success(
-        pending.action === 'VERIFIED' ? 'Dokumen berhasil diverifikasi.' : 'Dokumen ditolak.'
-      )
+      toast.success(pending.action === 'VERIFIED' ? 'Dokumen berhasil diverifikasi.' : 'Dokumen ditolak.')
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Gagal memproses dokumen.')
     } finally {
       setPending(null)
     }
   }
+
+  const isActing = verify.isPending || deleteLoading
 
   if (isLoading) return <div className="flex justify-center py-12"><LoadingSpinner size="lg" /></div>
 
@@ -239,15 +238,19 @@ export function IdentityTable() {
         open={!!pending}
         onCancel={() => setPending(null)}
         onConfirm={handleConfirm}
-        title={pending?.action === 'VERIFIED' ? 'Verifikasi Dokumen?' : 'Tolak Dokumen?'}
-        description={
-          pending?.action === 'VERIFIED'
-            ? 'Dokumen ini akan ditandai sebagai terverifikasi.'
-            : 'Dokumen ini akan ditolak dan pengguna perlu mengupload ulang.'
+        title={
+          pending?.action === 'VERIFIED' ? 'Verifikasi Dokumen?' :
+          pending?.action === 'DELETE' ? 'Hapus Dokumen?' :
+          'Tolak Dokumen?'
         }
-        confirmLabel={pending?.action === 'VERIFIED' ? 'Verifikasi' : 'Tolak'}
-        destructive={pending?.action === 'REJECTED'}
-        isLoading={verify.isPending}
+        description={
+          pending?.action === 'VERIFIED' ? 'Dokumen ini akan ditandai sebagai terverifikasi.' :
+          pending?.action === 'DELETE' ? '⚠️ Dokumen akan dihapus permanen dari Cloudinary dan database. Status verifikasi user di-reset ke PENDING. Tindakan ini tidak dapat dibatalkan.' :
+          'Dokumen ini akan ditolak dan pengguna perlu mengupload ulang.'
+        }
+        confirmLabel={pending?.action === 'VERIFIED' ? 'Verifikasi' : pending?.action === 'DELETE' ? 'Hapus' : 'Tolak'}
+        destructive={pending?.action === 'REJECTED' || pending?.action === 'DELETE'}
+        isLoading={isActing}
       />
 
       {/* Modal detail user */}

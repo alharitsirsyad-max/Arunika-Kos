@@ -73,13 +73,19 @@ function UnitRow({ unit }: UnitRowProps) {
   const [note, setNote] = useState('')
   const [isUpdating, setIsUpdating] = useState(false)
 
+  // Sync selectedStatus jika unit.status berubah dari luar (setelah invalidateQueries)
   const currentStatus = unit.status as UnitStatus
+  if (!showConfirm && selectedStatus !== currentStatus) {
+    setSelectedStatus(currentStatus)
+  }
   const hasTenant = currentStatus === 'RESERVED' || currentStatus === 'OCCUPIED'
   const tenantName = unit.tenant_name ?? null
   const tenantPhone = unit.tenant_phone ?? null
 
   const handleStatusChange = (newStatus: UnitStatus) => {
-    if (newStatus === currentStatus) return
+    // Skip jika memilih status yang sama dengan yang sedang dipilih (selectedStatus saat konfirmasi terbuka, atau currentStatus saat tidak)
+    const activeStatus = showConfirm ? selectedStatus : currentStatus
+    if (newStatus === activeStatus) return
     setSelectedStatus(newStatus)
     setNote('')
     setShowConfirm(true)
@@ -123,18 +129,19 @@ function UnitRow({ unit }: UnitRowProps) {
 
         {/* Status dropdown */}
         <select
-          value={currentStatus}
+          value={showConfirm ? selectedStatus : currentStatus}
           onChange={(e) => handleStatusChange(e.target.value as UnitStatus)}
           disabled={isUpdating}
           className="rounded border border-input bg-background px-2 py-1 text-xs outline-none focus:ring-2 focus:ring-ring/50 disabled:opacity-50"
           aria-label={`Ubah status unit ${unit.room_number}`}
         >
           <option value="AVAILABLE">Tersedia</option>
+          <option value="RESERVED">Dipesan</option>
           <option value="OCCUPIED">Terisi</option>
         </select>
 
-        {/* Current status badge */}
-        <UnitStatusBadge status={currentStatus} />
+        {/* Current status badge — ikuti selectedStatus saat konfirmasi terbuka */}
+        <UnitStatusBadge status={showConfirm ? selectedStatus : currentStatus} />
 
         {/* Tenant info */}
         {hasTenant ? (
@@ -152,9 +159,25 @@ function UnitRow({ unit }: UnitRowProps) {
           <p className="font-medium text-amber-900 text-xs">
             Ubah status unit {unit.room_number} ke {UNIT_STATUS_LABEL[selectedStatus]}?
           </p>
-          {selectedStatus === 'AVAILABLE' && (
+          {selectedStatus === 'AVAILABLE' && currentStatus === 'OCCUPIED' && (
+            <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 space-y-0.5">
+              <p className="text-xs text-red-700 font-semibold">
+                ⚠️ Penyewa aktif akan dikeluarkan secara paksa!
+              </p>
+              {tenantName && (
+                <p className="text-xs text-red-600">
+                  Penyewa: <span className="font-medium">{tenantName}</span>
+                  {tenantPhone ? ` (${tenantPhone})` : ''}
+                </p>
+              )}
+              <p className="text-xs text-red-600">
+                Booking akan ditandai selesai dan invoice yang belum dibayar akan dihapus.
+              </p>
+            </div>
+          )}
+          {selectedStatus === 'AVAILABLE' && currentStatus === 'RESERVED' && (
             <p className="text-xs text-red-700 font-medium">
-              ⚠️ Booking aktif / DP yang sudah dibayar akan diterminasi otomatis.
+              ⚠️ Booking DP yang sudah dibayar akan dibatalkan dan masuk antrian refund.
             </p>
           )}
           <div className="flex flex-col gap-1">
@@ -214,7 +237,7 @@ function UnitManager({ room }: UnitManagerProps) {
   return (
     <div className="space-y-1.5 px-2 pb-2">
       {units.map((unit) => (
-        <UnitRow key={unit.id} unit={{ ...unit, room_id: room.id }} />
+        <UnitRow key={`${unit.id}-${unit.status}`} unit={{ ...unit, room_id: room.id }} />
       ))}
     </div>
   )
