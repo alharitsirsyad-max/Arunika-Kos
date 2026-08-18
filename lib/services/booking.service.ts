@@ -202,13 +202,28 @@ export const bookingService = {
       // Map bookingId → whether that booking itself is the active one
       const activeBookingIds = new Set(conflictingUnitRows.map((b) => b.id));
 
+      // Fetch status aktual semua unit yang terlibat dalam booking PENDING
+      const pendingBookings = bookings.filter((b) => b.status === "PENDING");
+      const pendingUnitIds = [...new Set(pendingBookings.map((b) => b.room_unit_id))];
+
+      const occupiedUnits = await prisma.roomUnit.findMany({
+        where: {
+          id: { in: pendingUnitIds },
+          status: { in: ["OCCUPIED", "RESERVED"] },
+        },
+        select: { id: true },
+      });
+      const occupiedUnitIds = new Set(occupiedUnits.map((u) => u.id));
+
       return bookings.map((booking) => ({
         ...booking,
-        // unit_has_conflict is true when the unit has an active booking
-        // but the current booking is NOT that active booking itself.
+        // unit_has_conflict jika:
+        // 1. Unit punya booking DP_PENDING/DP_PAID lain, ATAU
+        // 2. Status unit aktual sudah OCCUPIED/RESERVED
         unit_has_conflict:
-          activeUnitIds.has(booking.room_unit_id) &&
-          !activeBookingIds.has(booking.id),
+          (activeUnitIds.has(booking.room_unit_id) &&
+            !activeBookingIds.has(booking.id)) ||
+          (booking.status === "PENDING" && occupiedUnitIds.has(booking.room_unit_id)),
       }));
     }
     return bookingRepo.findByUserId(userId);
